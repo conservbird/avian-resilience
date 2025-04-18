@@ -3,7 +3,7 @@ Code for paper "Quantifying avian resilience to habitat change to support conser
 
 Using data provided at (https://doi.org/10.26078/k5ar-c181) follow the numerical order of named R scripts to reproduce the analysis I ran in the article "Quantifying avian resilience to habitat change to support conservation decision-making"
 
-Contains:
+This repository contains:
 1_detection.matrices.formatting.R
 2_covariate.formatting.R
 3_jags.model.run.R
