@@ -7,3 +7,4 @@ This repository contains:
 1_detection.matrices.formatting.R
 2_covariate.formatting.R
 3_jags.model.run.R
+4_calculating.resilience.metircs.R
