@@ -4,7 +4,7 @@
 # decision making"
 # Code by Amanda L. Hayes-Puttfarcken
 # Affiliated with Utah State University
-# 04/11/2025
+# 10/17/2025
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 ## Load libraries that will be needed
@@ -112,122 +112,7 @@ for (species in species_list) {
 }
 
 
-## resilience metrics (GRIP and RT) are calculated as part of Figure 4 creation below (see lines 120-188 for an example)
-
-#### figure creation ####
-
-### Figure 4 ###
-
-# make 2 dataframes, one for the SSU level and one for the PSU level, with GRIP and RT
-
-## AMRO; one species example for the PSU level dataframe
-load("jags_results_VDEP.amro.uedep.dat") # the model output
-yrwa <- read.csv("amro.uedep.csv") # the detection input data
-for.estimates2 <- yrwa 
-
-colnames(for.estimates2)[2] <- "full.names" # check is correct column every time - should be pointnum_time_year
-for.estimates2 <- for.estimates2 %>% 
-  left_join(jags.site.covs %>% dplyr::select(lin_UEDEP, poly_UEDEP, UEDEP, lin_UEDEP_scale, poly_UEDEP_scale, full.names, PSU.num, pointnum), by = "full.names")
-for.estimates2$pointnum <- str_extract(for.estimates2$pointnum, "^.*(?=(_))") 
-
-psu.estimates <- for.estimates2 %>% 
-  left_join(psu.extraction2 %>% dplyr::select(mean_UEDEP, pointnum), by = "pointnum")
-
-psu.estimates <- psu.estimates %>% group_by(PSU.num) %>%
-  dplyr::dplyr::summarise(detect = paste(min, collapse=", "),
-                          UEDEP = mean(mean_UEDEP)) # grouping the PSUs together
-psu.estimates$first <- rep(NA, nrow(psu.estimates)) # blank row
-
-psu.ests <- strsplit(psu.estimates$detect, ", ") # splitting the conglomerated rows
-letshope <- as.data.frame(do.call(rbind, psu.ests)) # re-binding the rows into a better form
-psu.estimates$first <- apply(letshope, 1, FUN = min) # taking the minimum of the rows to select the first time period the species was spotted in in each PSU
-psu.estimates <- psu.estimates[,-2] # removing the middle row with the list of detection info
-
-psu_for_poly <- poly(psu.estimates$UEDEP, 2) # orthagonal polynomials
-psu_for_df <- outer(psu.estimates$UEDEP, 0:2, `^`); colnames(psu_for_df) <- c("Intercept", "Linr", "Squ") #contains 'raw' polynomial values
-psu.estimates$UEDEP <- psu_for_df[,2]
-psu.estimates$UEDEP.sq <- psu_for_df[,3]
-poly_lin <- lm(psu_for_poly[,1] ~ UEDEP, data = psu.estimates) #create a model that predicts the poly degree=1 value based on raw data
-poly_qu <- lm(psu_for_poly[,2] ~ UEDEP + UEDEP.sq, data = psu.estimates) 
-
-
-med.values <- c(median(samples_jags$alpha.0[2000:10000]), median(samples_jags$alpha.VDEP[2000:10000]), median(samples_jags$alpha.VDEP.sq[2000:10000])) # range here depends on the # of iterations and burn in the species model
-hdi.values <- c(hdi(samples_jags$alpha.0[2000:10000]), hdi(samples_jags$alpha.VDEP[2000:10000]), hdi(samples_jags$alpha.VDEP.sq[2000:10000]))
-
-xay <- seq(min(psu.estimates$UEDEP), max(psu.estimates$UEDEP), by = 1) 
-
-
-predOccCurve.psu = plogis(med.values[1] + 
-                            (med.values[2] * (((poly_lin$coefficients[["(Intercept)"]] + poly_lin$coefficients[["UEDEP"]] * xay)  - mean(psu_for_poly[,1])) / sd(psu_for_poly[,1])))  +
-                            (med.values[3] * ((((poly_qu$coefficients[["(Intercept)"]] + poly_qu$coefficients[["UEDEP"]] * xay) + (poly_qu$coefficients[["UEDEP.sq"]] * xay^2)) - mean(psu_for_poly[,2])) / sd(psu_for_poly[,2])))) 
-predOccCurve.psu.lower = plogis(hdi.values[1] + 
-                                  (hdi.values[3] * (((poly_lin$coefficients[["(Intercept)"]] + poly_lin$coefficients[["UEDEP"]] * xay)  - mean(psu_for_poly[,1])) / sd(psu_for_poly[,1])))  +
-                                  (hdi.values[5] * ((((poly_qu$coefficients[["(Intercept)"]] + poly_qu$coefficients[["UEDEP"]] * xay) + (poly_qu$coefficients[["UEDEP.sq"]] * xay^2)) - mean(psu_for_poly[,2])) / sd(psu_for_poly[,2])))) 
-predOccCurve.psu.upper = plogis(hdi.values[2] + 
-                                  (hdi.values[4] * (((poly_lin$coefficients[["(Intercept)"]] + poly_lin$coefficients[["UEDEP"]] * xay)  - mean(psu_for_poly[,1])) / sd(psu_for_poly[,1])))  +
-                                  (hdi.values[6] * ((((poly_qu$coefficients[["(Intercept)"]] + poly_qu$coefficients[["UEDEP"]] * xay) + (poly_qu$coefficients[["UEDEP.sq"]] * xay^2)) - mean(psu_for_poly[,2])) / sd(psu_for_poly[,2]))))
-
-d1 <- diff(predOccCurve.psu) # first derivative
-d2 <- diff(d1) # second derivative
-
-perc0.050 <- c(median(predOccCurve.psu) - (0.05 * median(predOccCurve.psu)), median(predOccCurve.psu) + (0.05 * median(predOccCurve.psu))) # decision rule of 5% change
-if (between(min(predOccCurve.psu), perc0.050[1], perc0.050[2]) | between(max(predOccCurve.psu), perc0.050[1], perc0.050[2])) {
-  GRIP <- NA
-  resilience.theshold <- 37 # for linear species
-  direct.1 <- "flat"
-} else {
-  if (predOccCurve[1] > predOccCurve[38]) {
-    GRIP <- which.max(abs(d1)) + 1 
-    resilience.theshold <- which.max(abs(d2)) + 1
-    direct.1 <- "negative" # for negative species
-  } else {
-    GRIP <- which.max(d1) + 1
-    resilience.theshold <- which.max(d2) + 1
-    direct.1 <- "positive" # for positive species
-  } 
-}
-
-derivatives.per.spp.psu[1, 2:4] <- c(GRIP, resilience.theshold, direct.1) # putting it into dataframe
-save(xay, predOccCurve.psu, predOccCurve.psu.lower, predOccCurve.psu.upper, d1, d2, file = "real.occ.objs.psu.amro.uedep.RData") # will use this and the SSU version for occupancy probability plots 
-
-
-## completed dataframes
-derivatives.per.spp <- read.csv("ssu.derivs.w.rules.GRIPrange.csv") # derivatives at SSU level; same as "GRIP.RT.SSU.csv" but with 1 column for all GRIPs
-derivatives.per.spp.psu <- read.csv("psu.derivs.w.rules.GRIPrange.csv") # derivatives at PSU level; same as "GRIP.RT.PSU.csv" but with 1 column for all GRIPs
-
-# for spp with range of GRIP values, choose median
-derivatives.per.spp.4grip <- derivatives.per.spp %>% drop_na("GRIP.range")
-derivatives.per.spp.4grip$GRIP.plot <- c(38,36.5,38,3,38,2,33,38,29,9,2,2,16.5,38,38,38,2,38,2,2,38,37,37,4.5,38,38,38,38,38,2) # have to do manual average bc column is character
-
-derivatives.per.spp.psu.4grip <- derivatives.per.spp.psu %>% drop_na("GRIP.psu")
-derivatives.per.spp.psu.4grip$GRIP.plot <- c(38,2.5,5.5,25,3,20,3,2,2,2.5,2,5,21,38,3,5) # same as line 200 but for PSU
-
-
-par(mfrow = c(2,2), mar = numeric(4), oma = c(4, 4, .5, .5), 
-    mgp = c(2, .6, 0), mai = c(.1, .3, .3, .3), family = "arial")
-
-hist(derivatives.per.spp.4grip$GRIP.plot, col = "#cc5500", main = "", # GRIP SSU values
-     ylab = "", xlab = "", las = 1, ylim = c(0,20))
-hist(derivatives.per.spp.psu.4grip$GRIP.plot, col = "#cc5500", main = "", # GRIP PSU values
-     ylab = "", xlab = "", las = 1, ylim = c(0,20), breaks = 8)
-mtext("GRIP", side = 1, outer = FALSE, line = 2) # ended up manually adding this
-#mtext("# of Species", side = 2, outer = TRUE, line = 1)
-
-hist(derivatives.per.spp$RT.newest, col = "#cc5500", main = "", # RT SSU values
-     ylab = "", xlab = "", las = 1, ylim = c(0,50))
-hist(derivatives.per.spp.psu$RT.psu, col = "#cc5500", main = "", # RT PSU values
-     ylab = "", xlab = "", las = 1, ylim = c(0,50))
-mtext("Resilience Threshold", side = 1, outer = FALSE, line = 2) # ended up manually adding this
-mtext("# of Species", side = 2, outer = TRUE, line = 1)
-
-# correlation between RT and GRIP @ PSU and SSU levels
-d4cor.ssu <- derivatives.per.spp[, c(2,3)] # just GRIP and RT
-d4cor.psu <- derivatives.per.spp.psu[, c(3,4)] # just GRIP and RT
-cor(d4cor.psu,d4cor.ssu, method = "pearson", use = "pairwise.complete.obs")
-
-# correlation between RT and GRIP at each level
-cor(d4cor.ssu, method = "pearson", use = "pairwise.complete.obs")
-cor(d4cor.psu, method = "pearson", use = "pairwise.complete.obs")
+#### figure creation #1-3 ####
 
 
 ### Figure 3 ###
@@ -235,35 +120,103 @@ cor(d4cor.psu, method = "pearson", use = "pairwise.complete.obs")
 load("real.occCurve.deriv.yewa.RData") # load the occupancy curve data points for the SSU level of species YEWA (see line 124 for PSU version)
 par(mfrow = c(1,3), mar = numeric(4), oma = c(3, 3, .5, .5), # for 3 panels
     mgp = c(2, .6, 0), mai = c(.1, .1, .1, .1))
-plot(xax, predOccCurve, type='n', las=1, ylim=range(0, 0.4), xlim=range(0,40), bty="n",
-     xlab="UEDEP", ylab="Occupancy probability")
-polygon(x=c(xax, rev(xax)),
-        y=c(predOccCurve.lower, rev(predOccCurve.upper)),
-        col=adjustcolor('skyblue', 0.5), border=NA) # for the credible interval of occupancy probability
-lines(predOccCurve~xax, lwd = 2, col = "blue") # occupancy probability
+
+# Create spline fits up to x = 40
+x_seq <- seq(min(xax), 40, by = 0.1)
+
+spline_pred <- spline(xax, predOccCurve, xout = x_seq)
+spline_lower <- spline(xax, predOccCurve.lower, xout = x_seq)
+spline_upper <- spline(xax, predOccCurve.upper, xout = x_seq)
+
+# Plot setup
+plot(x_seq, spline_pred$y, type='n', las=1, ylim=range(0, 0.4), xlim=c(0,40),
+     xlab="UEDEP", ylab="Occupancy probability", bty="n")
+
+# Polygon for the credible interval
+polygon(x = c(x_seq, rev(x_seq)),
+        y = c(spline_lower$y, rev(spline_upper$y)),
+        col = adjustcolor('skyblue', 0.5), border = NA)
+
+# Main occupancy curve line
+lines(spline_pred$x, spline_pred$y, lwd = 2, col = "blue")
+
+# Add GMIP and RT based on Table S5
+y0 <- approx(spline_pred$x, spline_pred$y, xout = 0)$y
+y40 <- approx(spline_pred$x, spline_pred$y, xout = 40)$y
+segments(0, 0, 0, y0, col = "#48D1CC", lty = 2, lwd = 2) # RT
+segments(40, 0, 40, y40, col = "darkorange", lty = 2, lwd = 2) # GMIP
+
 mtext("UEDEP", side = 1, outer = TRUE, line = 1.5)
 mtext("Occupancy probability", side = 2, outer = TRUE, line = 1.5)
 
 load("real.occCurve.deriv.atfl.RData") # panel 2 - species ATFL
-plot(xax, predOccCurve, type='n', las=1, ylim=range(0, 0.4), xlim=range(0,40), bty="n",
-     xlab="UEDEP", ylab="Occupancy probability")
-polygon(x=c(xax, rev(xax)),
-        y=c(predOccCurve.lower, rev(predOccCurve.upper)),
-        col=adjustcolor('skyblue', 0.5), border=NA) # for the credible interval of occupancy probability
-lines(predOccCurve~xax, lwd = 2, col = "blue") # occupancy probability
+
+# Create spline fits up to x = 40
+x_seq <- seq(min(xax), 40, by = 0.1)
+
+spline_pred <- spline(xax, predOccCurve, xout = x_seq)
+spline_lower <- spline(xax, predOccCurve.lower, xout = x_seq)
+spline_upper <- spline(xax, predOccCurve.upper, xout = x_seq)
+
+# Plot setup
+plot(x_seq, spline_pred$y, type='n', las=1, ylim=range(0, 0.4), xlim=c(0,40),
+     xlab="UEDEP", ylab="Occupancy probability", bty="n")
+
+# Polygon for the credible interval
+polygon(x = c(x_seq, rev(x_seq)),
+        y = c(spline_lower$y, rev(spline_upper$y)),
+        col = adjustcolor('skyblue', 0.5), border = NA)
+
+# Main occupancy curve line
+lines(spline_pred$x, spline_pred$y, lwd = 2, col = "blue")
+
+# Add GMIP and RT based on Table S5
+y40a <- approx(spline_pred$x, spline_pred$y, xout = 40)$y
+y40b <- approx(spline_pred$x, spline_pred$y, xout = 40)$y
+segments(40, 0, 40, y40a, col = "#48D1CC", lty = 3, lwd = 2) # RT
+segments(40, 0, 40, y40b, col = "darkorange", lty = 2, lwd = 2) # GMIP
 
 load("real.occCurve.deriv.howr.RData") # panel 3 - species HOWR
-plot(xax, predOccCurve, type='n', las=1, ylim=range(0, 0.4), xlim=range(0,40), bty="n",
-     xlab="UEDEP", ylab="Occupancy probability")
-polygon(x=c(xax, rev(xax)),
-        y=c(predOccCurve.lower, rev(predOccCurve.upper)),
-        col=adjustcolor('skyblue', 0.5), border=NA) # for the credible interval of occupancy probability
-lines(predOccCurve~xax, lwd = 2, col = "blue") # occupancy probability
+
+# Create spline fits up to x = 40
+x_seq <- seq(min(xax), 40, by = 0.1)
+
+spline_pred <- spline(xax, predOccCurve, xout = x_seq)
+spline_lower <- spline(xax, predOccCurve.lower, xout = x_seq)
+spline_upper <- spline(xax, predOccCurve.upper, xout = x_seq)
+
+# Plot setup
+plot(x_seq, spline_pred$y, type='n', las=1, ylim=range(0, 0.4), xlim=c(0,40),
+     xlab="UEDEP", ylab="Occupancy probability", bty="n")
+
+# Polygon for the credible interval
+polygon(x = c(x_seq, rev(x_seq)),
+        y = c(spline_lower$y, rev(spline_upper$y)),
+        col = adjustcolor('skyblue', 0.5), border = NA)
+
+# Main occupancy curve line
+lines(spline_pred$x, spline_pred$y, lwd = 2, col = "blue")
+
+# Add GMIP and RT based on Table S5
+y0a <- approx(spline_pred$x, spline_pred$y, xout = 0)$y
+y0b <- approx(spline_pred$x, spline_pred$y, xout = 0)$y
+segments(0, 0, 0, y0a, col = "#48D1CC", lty = 3, lwd = 2) # RT
+segments(0, 0, 0, y0b, col = "darkorange", lty = 2, lwd = 2) # GMIP
+
+legend("topright",                                 # location of the key
+       legend = c("Occupancy", "RT", "GMIP"),  # labels
+       col = c("blue", "#48D1CC", "darkorange"),     # colors for line segments
+       lwd = c(2, 2, 2),                           # line widths
+       lty = c(1, 2, 2),                           # line types: solid for curve, dashed for verticals
+       bty = "n",                                  # remove box border
+       cex = 0.9,                                  # text size
+       y.intersp = 1.2)                            # spacing between lines
 
 
 ### Figure 2 ###
 
-## creating simulated plots for resilient and less resilient species showing their GRIPs and RTs 
+## creating simulated plots for resilient and less resilient species showing their GMIPs and RTs 
+## plus a simulated plot for a positive species to show the meaning of the difference in RT calculation
 
 ### Less resilient species example
 
@@ -301,22 +254,22 @@ pred_data$y_pred <- predict(model, newdata = pred_data, type = "response")
 d1 <- diff(y)
 d2 <- diff(d1)
 if (y[1] > y[100]) {
-  GRIP1 <- which.max(abs(d1)) + 1 
+  GMIP1 <- which.max(abs(d1)) + 1 
   resilience.theshold1 <- which.max(round(abs(d2), digits = 6)) + 1 # for negative species
 } else {
-  GRIP1 <- which.max(d1) + 1
+  GMIP1 <- which.max(d1) + 1
   resilience.theshold1 <- which.max(d2) + 1 # for positive species
 } 
-GRIP1
+GMIP1
 resilience.theshold1
 
-y_GRIP1 <- predict(model, newdata = data.frame(x = GRIP1), type = "response")
+y_GMIP1 <- predict(model, newdata = data.frame(x = GMIP1), type = "response")
 y_res.thresh1 <- predict(model, newdata = data.frame(x = resilience.theshold1), type = "response")
 
 # Plot the logistic decline
 spp1 <- ggplot(plot_data, aes(x, y)) +
   geom_line(data = pred_data, aes(x, y_pred), color = "black", size = 1.2) +  # Fitted curve
-  geom_segment(aes(x = GRIP1, xend = GRIP1, y = 0, yend = y_GRIP1), 
+  geom_segment(aes(x = GMIP1, xend = GMIP1, y = 0, yend = y_GMIP1), 
                color = "blue", linetype = "dashed", size = 1) +  # Vertical line to regression line
   geom_segment(aes(x = resilience.theshold1, xend = resilience.theshold1, y = 0, yend = y_res.thresh1), 
                color = "darkorange", linetype = "dashed", size = 1) +  # Vertical line to regression line
@@ -359,22 +312,22 @@ pred_data$y_pred <- predict(model, newdata = pred_data, type = "response")
 d1 <- diff(y)
 d2 <- diff(d1)
 if (y[1] > y[100]) {
-  GRIP <- which.max(abs(d1)) + 1 
+  GMIP <- which.max(abs(d1)) + 1 
   resilience.theshold <- which.max(round(abs(d2), digits = 6)) + 1 # for negative species
 } else {
-  GRIP <- which.max(d1) + 1
+  GMIP <- which.max(d1) + 1
   resilience.theshold <- which.max(d2) + 1 # for positive species
 } 
-GRIP
+GMIP
 resilience.theshold
 
-y_GRIP <- predict(model, newdata = data.frame(x = GRIP), type = "response")
+y_GMIP <- predict(model, newdata = data.frame(x = GMIP), type = "response")
 y_res.thresh <- predict(model, newdata = data.frame(x = resilience.theshold), type = "response")
 
 # Plot the slow-then-fast decline
 spp2 <- ggplot(plot_data, aes(x, y)) +
   geom_line(data = pred_data, aes(x, y_pred), color = "black", size = 1.2) +  # Fitted curve
-  geom_segment(aes(x = GRIP, xend = GRIP, y = 0, yend = y_GRIP), 
+  geom_segment(aes(x = GMIP, xend = GMIP, y = 0, yend = y_GMIP), 
                color = "blue", linetype = "dashed", size = 1) +  # Vertical line to regression line
   geom_segment(aes(x = resilience.theshold, xend = resilience.theshold, y = 0, yend = y_res.thresh), 
                color = "darkorange", linetype = "dashed", size = 1) +  # Vertical line to regression line
@@ -384,9 +337,72 @@ spp2 <- ggplot(plot_data, aes(x, y)) +
   theme_classic()
 
 
-# plot both together
+### Positive species example 
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Predictor range
+x <- seq(0, 100, length.out = 100)
+
+# Quintic polynomial inside the logistic (to easily create the conditions of this relationship)
+beta0 <- -6
+beta1 <- 0.20
+beta2 <- -0.004
+beta3 <- 0.00006
+beta4 <- -0.0000004
+beta5 <- 0.000000001
+
+eta <- beta0 + beta1*x + beta2*x^2 + beta3*x^3 + beta4*x^4 + beta5*x^5
+y <- 1 / (1 + exp(-eta))   # logistic keeps y in [0,1]
+
+# Numerical derivatives 
+grad_central <- function(x, y) {
+  n <- length(x)
+  g <- numeric(n)
+  g[1] <- (y[2] - y[1]) / (x[2] - x[1])
+  g[n] <- (y[n] - y[n-1]) / (x[n] - x[n-1])
+  for (i in 2:(n-1)) {
+    g[i] <- (y[i+1] - y[i-1]) / (x[i+1] - x[i-1])
+  }
+  g
+}
+
+y_prime <- grad_central(x, y) # first derivative column
+y_double <- grad_central(x, y_prime) # second derivative column
+
+# combine in a data frame
+df <- data.frame(x, y, y_prime, y_double) 
+
+# calculate GMIP and RT
+if (df$y[1] > df$y[100]) {
+  GMIP2 <- which.max(abs(df$y_prime)) + 1 
+  resilience.theshold2 <- which.max(round(abs(df$y_double), digits = 6)) + 1 # for negative species
+} else {
+  GMIP2 <- which.max(df$y_prime) + 1
+  resilience.theshold2 <- which.max(df$y_double) + 1 # for positive species
+} 
+GMIP2
+resilience.theshold2
+
+y_GMIP2 <- df$y[GMIP2]
+y_res.thresh2 <- df$y[resilience.theshold2]
+
+# plot the positive trend example
+spp3 <- ggplot(df, aes(x, y)) +
+  geom_line(data = df, aes(x, y), color = "black", size = 1.2) +  # Fitted curve
+  geom_segment(aes(x = GMIP2, xend = GMIP2, y = 0, yend = y_GMIP2), 
+               color = "blue", linetype = "dashed", size = 1) +  # Vertical line to regression line
+  geom_segment(aes(x = resilience.theshold2, xend = resilience.theshold2, y = 0, yend = y_res.thresh2), 
+               color = "darkorange", linetype = "dashed", size = 1) +  # Vertical line to regression line
+  labs(x = "",
+       y = "") +
+  theme_classic()
+
+
+# plot them together
 library(patchwork)
-spp1 | spp2 
+spp1 | spp2 | spp3
 
 
 ### Figure 1 ###
@@ -400,8 +416,10 @@ library(raster)
 
 # Load data
 UEDEP <- rast("UT_UEDEP.tif") # the LANDFIRE UEDEP data
-sampling.points <- vect("bird.spatial.pub.use.shp") # survey sites
-utah_utgis <- vect("utah.pub.use.shp") # state of Utah boundary shapefile
+sampling.points <- vect("bird.spatial.pub.use.shp") # survey sites, in EPSG: 5070
+crs(sampling.points) <- "epsg: 5070" # if it didn't load in
+utah_utgis <- vect("utah.pub.use.shp") # state of Utah boundary shapefile, in EPSG: 5070
+crs(utah_utgis) <- "epsg:5070" # if it didn't load in
 
 # Reproject UEDEP and Utah boundary to a visually appealing EPSG (4269)
 UEDEP.straight <- project(UEDEP, "epsg:4269")
@@ -414,6 +432,7 @@ r.range <- c(min(values(UEDEP.straight), na.rm = T), max(values(UEDEP.straight),
 
 # Plot UEDEP Raster with Legend
 plot(UEDEP.straight, 
+     #alpha = 0.7,
      legend.args = list(text = 'UEDEP Score', side = 4, font = 2, line = 2.5, cex = 0.8),
      axis.args = list(at = seq(r.range[1], r.range[2], length.out = 5),
                       labels = seq(r.range[1], r.range[2], length.out = 5), 
@@ -421,7 +440,10 @@ plot(UEDEP.straight,
 
 # Add Utah boundary and sampling points
 plot(utah.good, add = TRUE)
-plot(sampling.points.good, add = TRUE, col = "black", pch = 16)
+plot(sampling.points.good, add = TRUE, 
+     col = "black", 
+     pch = 1,
+     cex = 0.9)
 
 # Add North Arrow and Scale Bar
 north(type = 2, location = "topright") # Place north arrow in top right corner
