@@ -8,3 +8,7 @@ This repository contains:
 2_covariate.formatting.R
 3_jags.model.run.R
 4_calculating.resilience.metircs.R
+
+DOI for this code:
+
+<img width="191" height="20" alt="image" src="https://github.com/user-attachments/assets/81d42a28-2a64-4111-8fc4-6fcd65a35689" />
